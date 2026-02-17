@@ -1,6 +1,9 @@
 from flask import Flask, jsonify, request
 import mysql.connector
 from flask_cors import CORS
+import io
+import pandas as pd
+from flask import send_file
 
 app = Flask(__name__)
 CORS(app)
@@ -201,6 +204,126 @@ class DatabaseManager:
             cursor.close()
             conn.close()
 
+    def get_manager_overview(self):
+        """Fetches KPI data and recent transactions for the dashboard."""
+        conn = self.get_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            # KPI 1: Total Revenue Today
+            cursor.execute("SELECT SUM(total_price) as revenue FROM wash_transactions WHERE DATE(logged_at) = CURDATE()")
+            revenue = cursor.fetchone()['revenue'] or 0
+
+            # KPI 2: Cars Washed Today
+            cursor.execute("SELECT COUNT(*) as count FROM wash_transactions WHERE DATE(logged_at) = CURDATE()")
+            cars_count = cursor.fetchone()['count'] or 0
+
+            # KPI 3: Active Plan Washes Today
+            cursor.execute("SELECT COUNT(*) as count FROM wash_transactions WHERE DATE(logged_at) = CURDATE() AND payment_method = 'plan'")
+            plan_washes = cursor.fetchone()['count'] or 0
+
+            # Recent Transactions (Last 10)
+            query_recent = """
+                SELECT t.wash_transaction_id, v.license_plate, t.total_price, t.payment_method, t.logged_at
+                FROM wash_transactions t
+                JOIN vehicles v ON t.vehicle_id = v.vehicle_id
+                ORDER BY t.logged_at DESC LIMIT 10
+            """
+            cursor.execute(query_recent)
+            transactions = cursor.fetchall()
+
+            return {
+                "kpis": {
+                    "revenue": float(revenue),
+                    "cars": cars_count,
+                    "plans": plan_washes
+                },
+                "recent": transactions
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_wash_details(self, wash_id):
+        """Fetches all relational data for a specific wash job."""
+        conn = self.get_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            # 1. Get Services performed (from snapshot table)
+            cursor.execute("""
+                SELECT service_name_snapshot, service_price_snapshot 
+                FROM wash_transaction_services WHERE wash_transaction_id = %s
+            """, (wash_id,))
+            services = cursor.fetchall()
+
+            # 2. Get Employees assigned
+            cursor.execute("""
+                SELECT u.user_name FROM wash_transaction_employees wte
+                JOIN users u ON wte.user_id = u.user_id
+                WHERE wte.wash_transaction_id = %s
+            """, (wash_id,))
+            staff = cursor.fetchall()
+
+            # 3. Get Adjustments (Discounts/Fees)
+            cursor.execute("""
+                SELECT adjustment_type, adjustment_amount, adjustment_reason 
+                FROM wash_transaction_adjustments WHERE wash_transaction_id = %s
+            """, (wash_id,))
+            adjustments = cursor.fetchall()
+
+            return {
+                "services": services,
+                "staff": [s['user_name'] for s in staff],
+                "adjustments": adjustments
+            }
+        finally:
+            cursor.close()
+            conn.close()
+
+    def get_filtered_report(self, filters):
+        """
+        Retrieves wash data and uses Pandas for advanced filtering.
+        Demonstrates complex data processing for Criterion C.
+        """
+        conn = self.get_connection()
+        
+        # SQL query to get the base dataset
+        query = """
+            SELECT 
+                t.wash_transaction_id as ID,
+                v.license_plate as Plate,
+                t.total_price as Total,
+                t.payment_method as Method,
+                t.logged_at as Date,
+                u.user_name as CreatedBy
+            FROM wash_transactions t
+            JOIN vehicles v ON t.vehicle_id = v.vehicle_id
+            JOIN users u ON t.created_by_user_id = u.user_id
+        """
+        
+        # Load data directly into a Pandas DataFrame
+        df = pd.read_sql(query, conn)
+        conn.close()
+
+        # --- ALGORITHM: Pandas Filtering ---
+        if not df.empty:
+            # 1. Filter by Date Range
+            if filters.get('startDate') and filters.get('endDate'):
+                df['Date'] = pd.to_datetime(df['Date'])
+                mask = (df['Date'] >= filters['startDate']) & (df['Date'] <= filters['endDate'])
+                df = df.loc[mask]
+
+            # 2. Filter by Payment Method
+            if filters.get('method') and filters.get('method') != 'all':
+                df = df[df['Method'] == filters['method'].lower()]
+
+            # 3. Filter by Staff (Created By)
+            if filters.get('staffId'):
+                # We fetch the username for the filter comparison
+                df = df[df['CreatedBy'] == filters['staffName']]
+
+        # Convert back to JSON for the frontend
+        return df.to_dict(orient='records')
+
 class User:
     """
     Represents a System User. 
@@ -314,6 +437,53 @@ def submit_wash():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
     
+@app.route('/manager-overview', methods=['GET'])
+def manager_overview():
+    return jsonify(db_manager.get_manager_overview())
+    
+@app.route('/wash-details/<int:wash_id>', methods=['GET'])
+def wash_details(wash_id):
+    return jsonify(db_manager.get_wash_details(wash_id))
+
+@app.route('/generate-report', methods=['POST'])
+def generate_report():
+    filters = request.json
+    report_data = db_manager.get_filtered_report(filters)
+    return jsonify(report_data)
+
+@app.route('/export-report', methods=['POST'])
+def export_report():
+    """
+    Exports filtered data to Excel or CSV.
+    Demonstrates the use of external libraries (Pandas, OpenPyXL) for data portability.
+    """
+    data = request.json.get('data') # The filtered data from the frontend state
+    format_type = request.json.get('format') # 'excel' or 'csv'
+    
+    if not data:
+        return jsonify({"error": "No data to export"}), 400
+
+    df = pd.DataFrame(data)
+    
+    # Create an in-memory file-like object
+    output = io.BytesIO()
+    
+    if format_type == 'excel':
+        # Requires 'openpyxl' installed: pip install openpyxl
+        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Wash_Report')
+        mimetype = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        filename = "PowerTrack_Report.xlsx"
+    else:
+        # CSV Export
+        csv_data = df.to_csv(index=False)
+        output.write(csv_data.encode())
+        mimetype = 'text/csv'
+        filename = "PowerTrack_Report.csv"
+
+    output.seek(0)
+    return send_file(output, mimetype=mimetype, as_attachment=True, download_name=filename)
+
 # --- SERVER START ---
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
