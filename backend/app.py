@@ -323,6 +323,64 @@ class DatabaseManager:
 
         # Convert back to JSON for the frontend
         return df.to_dict(orient='records')
+    
+    def get_client_plans_detailed(self):
+        """Fetches plans and aggregates their vehicle counts."""
+        conn = self.get_connection()
+        cursor = conn.cursor(dictionary=True)
+        # We join with client_plan_vehicles to show how many cars are on each plan
+        query = """
+            SELECT cp.*, COUNT(cv.vehicle_id) as vehicle_count 
+            FROM client_plans cp
+            LEFT JOIN client_plan_vehicles cv ON cp.client_plan_id = cv.client_plan_id
+            GROUP BY cp.client_plan_id
+        """
+        cursor.execute(query)
+        result = cursor.fetchall()
+        cursor.close()
+        conn.close()
+        return result
+
+    def add_full_client_plan(self, data):
+        """Saves Plan, then Vehicles, then Signature in one transaction."""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        try:
+            # 1. Insert Plan (Email/Phone can be None/Null)
+            plan_query = """
+                INSERT INTO client_plans (client_name, billing_cycle_type, contact_email, contact_phone, is_active)
+                VALUES (%s, %s, %s, %s, 1)
+            """
+            cursor.execute(plan_query, (
+                data['client_name'], 
+                data['billing_cycle'], 
+                data.get('contact_email'), # .get() returns None if missing
+                data.get('contact_phone')
+            ))
+            plan_id = cursor.lastrowid
+
+            # 2. Insert Vehicles linked to this plan
+            for veh in data['vehicles']:
+                # First create the vehicle record
+                cursor.execute(
+                    "INSERT INTO vehicles (category_id, make_model, license_plate) VALUES (%s, %s, %s)",
+                    (veh['category_id'], veh['make_model'], veh['license_plate'])
+                )
+                vehicle_id = cursor.lastrowid
+                # Link to the plan
+                cursor.execute(
+                    "INSERT INTO client_plan_vehicles (client_plan_id, vehicle_id) VALUES (%s, %s)",
+                    (plan_id, vehicle_id)
+                )
+
+            conn.commit()
+            return {"status": "success", "plan_id": plan_id}
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
 
 class User:
     """
@@ -483,6 +541,18 @@ def export_report():
 
     output.seek(0)
     return send_file(output, mimetype=mimetype, as_attachment=True, download_name=filename)
+
+@app.route('/api/plans', methods=['GET'])
+def api_get_plans():
+    return jsonify(db_manager.get_client_plans_detailed())
+
+@app.route('/api/plans/create', methods=['POST'])
+def api_create_plan():
+    return jsonify(db_manager.add_full_client_plan(request.json))
+
+@app.route('/api/categories', methods=['GET'])
+def api_get_categories():
+    return jsonify(db_manager.get_all_categories())
 
 # --- SERVER START ---
 if __name__ == '__main__':

@@ -7,6 +7,7 @@ import { BrowserRouter as Router, Routes, Route, useNavigate, useLocation } from
 import Sidebar from './components/Sidebar';
 import ManagerDashboard from './pages/ManagerDashboard';
 import DailyWorksheet from './pages/DailyWorksheet';
+import ClientPlans from './pages/ClientPlans';
 
 /**
  * Login Component
@@ -118,7 +119,7 @@ function App() {
           
           {/* Manager Specific Routes */}
           <Route path="/dashboard" element={<ManagerDashboard />} />
-          <Route path="/plans" element={<div style={{padding: '40px'}}><h2>Client Plan Management</h2><p>Feature under development.</p></div>} />
+          <Route path="/plans" element={<ClientPlans />} />
           <Route path="/staff" element={<div style={{padding: '40px'}}><h2>Staff Management</h2><p>Feature under development.</p></div>} />
           
           {/* Detailer Specific Routes */}
