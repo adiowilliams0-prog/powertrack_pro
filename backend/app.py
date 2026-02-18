@@ -382,6 +382,57 @@ class DatabaseManager:
             cursor.close()
             conn.close()
 
+    def generate_username(self, first, last):
+        # Base: First letter of first name + first & last letter of last name
+        base = (first[0] + last[0] + last[-1]).lower()
+        counter = 1
+        conn = self.get_connection()
+        cursor = conn.cursor()
+
+        while True:
+            username = f"{base}{str(counter).zfill(3)}" # e.g., jde001
+            cursor.execute("SELECT COUNT(*) FROM users WHERE username = %s", (username,))
+            if cursor.fetchone()[0] == 0:
+                conn.close()
+                return username
+            counter += 1
+
+    def toggle_user_active_status(self, user_id):
+        """
+        Toggles the is_active status of a user.
+        Includes a safety check to prevent deactivating the last Manager.
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor(dictionary=True)
+        try:
+            # 1. Fetch current status and role
+            cursor.execute("SELECT role, is_active FROM users WHERE user_id = %s", (user_id,))
+            user = cursor.fetchone()
+            
+            if not user:
+                return {"status": "error", "message": "User not found"}
+
+            # 2. Safety Check: Don't deactivate the last active Manager
+            if user['role'] == 'Manager' and user['is_active'] == 1:
+                cursor.execute("SELECT COUNT(*) as count FROM users WHERE role = 'Manager' AND is_active = 1")
+                active_managers = cursor.fetchone()['count']
+                if active_managers <= 1:
+                    return {"status": "error", "message": "Security Lockout: Cannot deactivate the last active Manager."}
+
+            # 3. Toggle the bit
+            new_status = 0 if user['is_active'] == 1 else 1
+            cursor.execute("UPDATE users SET is_active = %s WHERE user_id = %s", (new_status, user_id))
+            conn.commit()
+            
+            return {"status": "success", "new_status": new_status}
+        
+        except Exception as e:
+            conn.rollback()
+            raise e
+        finally:
+            cursor.close()
+            conn.close()
+
 class User:
     """
     Represents a System User. 
@@ -553,6 +604,44 @@ def api_create_plan():
 @app.route('/api/categories', methods=['GET'])
 def api_get_categories():
     return jsonify(db_manager.get_all_categories())
+
+@app.route('/api/users', methods=['GET'])
+def get_users():
+    conn = db_manager.get_connection()
+    cursor = conn.cursor(dictionary=True)
+    cursor.execute("SELECT user_id, full_name, username, role, is_active FROM users")
+    users = cursor.fetchall()
+    conn.close()
+    return jsonify(users)
+
+@app.route('/api/users/create', methods=['POST'])
+def create_user():
+    data = request.json
+    # Logic: Concatenate names and generate username
+    full_name = f"{data['firstName']} {data['lastName']}"
+    username = db_manager.generate_username(data['firstName'], data['lastName'])
+    
+    conn = db_manager.get_connection()
+    cursor = conn.cursor()
+    query = "INSERT INTO users (full_name, username, password, role, is_active) VALUES (%s, %s, %s, %s, 1)"
+    cursor.execute(query, (full_name, username, data['password'], data['role']))
+    conn.commit()
+    conn.close()
+    return jsonify({"status": "success", "username": username})
+
+@app.route('/api/users/toggle/<int:user_id>', methods=['POST'])
+def api_toggle_user(user_id):
+    """
+    Endpoint to flip the active/inactive status of a staff member.
+    """
+    try:
+        result = db_manager.toggle_user_active_status(user_id)
+        if result['status'] == 'success':
+            return jsonify(result), 200
+        else:
+            return jsonify(result), 403 # Forbidden if it's the last manager
+    except Exception as e:
+        return jsonify({"status": "error", "message": str(e)}), 500
 
 # --- SERVER START ---
 if __name__ == '__main__':

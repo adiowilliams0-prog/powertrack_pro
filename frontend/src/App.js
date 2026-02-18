@@ -8,6 +8,7 @@ import Sidebar from './components/Sidebar';
 import ManagerDashboard from './pages/ManagerDashboard';
 import DailyWorksheet from './pages/DailyWorksheet';
 import ClientPlans from './pages/ClientPlans';
+import StaffManagement from './pages/StaffManagement';
 
 /**
  * Login Component
@@ -120,7 +121,7 @@ function App() {
           {/* Manager Specific Routes */}
           <Route path="/dashboard" element={<ManagerDashboard />} />
           <Route path="/plans" element={<ClientPlans />} />
-          <Route path="/staff" element={<div style={{padding: '40px'}}><h2>Staff Management</h2><p>Feature under development.</p></div>} />
+          <Route path="/staff" element={<StaffManagement />} />
           
           {/* Detailer Specific Routes */}
           <Route path="/worksheet" element={<DailyWorksheet />} />
