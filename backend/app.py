@@ -7,6 +7,7 @@ from flask import send_file
 import jwt
 import datetime
 from functools import wraps
+from werkzeug.security import generate_password_hash, check_password_hash
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'secretkey123' # For development, in production, environment variables will be used for secrets!
@@ -30,18 +31,20 @@ class DatabaseManager:
     def get_connection(self):
         return mysql.connector.connect(**self.config)
 
-    def fetch_user_by_credentials(self, username, password):
-        # Method to find a user in the database.
+    def fetch_user_by_username(self, username):
+        """
+        Helper method to retrieve a user record for hash verification.
+        """
         conn = self.get_connection()
         cursor = conn.cursor(dictionary=True)
-        
-        query = "SELECT * FROM users WHERE username = %s AND password = %s"
-        cursor.execute(query, (username, password))
-        result = cursor.fetchone()
-        
-        cursor.close()
-        conn.close()
-        return result
+        try:
+            query = "SELECT * FROM users WHERE username = %s"
+            cursor.execute(query, (username,))
+            result = cursor.fetchone()
+            return result
+        finally:
+            cursor.close()
+            conn.close()
     
     def get_all_categories(self):
         conn = self.get_connection()
@@ -471,50 +474,53 @@ db_manager = DatabaseManager()
 
 @app.route('/login', methods=['POST'])
 def login():
-    # 1. Capture the data from the Request Object (sent by React)
+    """
+    Handles secure authentication by verifying salted password hashes.
+    Fulfills Success Criterion #2 (Security) and #5 (Session Management).
+    """
     data = request.json
     entered_username = data.get('username')
     entered_password = data.get('password')
 
     try:
-        # 2. Use the db_manager object to find the user in the database
-        user_record = db_manager.fetch_user_by_credentials(entered_username, entered_password)
+        # 1. Fetch user by username ONLY (Success Criterion #2)
+        # We can no longer check password in SQL because it's stored as a hash.
+        user_record = db_manager.fetch_user_by_username(entered_username)
 
         if user_record:
-            # 3. Check if account is active (Safety check for Criterion #6)
+            # 2. VERIFY HASHED PASSWORD
+            # check_password_hash takes the salt from the stored hash, 
+            # reapplies it to the 'entered_password', and compares the results.
+            if not check_password_hash(user_record['password'], entered_password):
+                return jsonify({"status": "fail", "message": "Invalid username or password"}), 401
+
+            # 3. Account Status Check (Criterion #6)
             if not user_record.get('is_active'):
                 return jsonify({"status": "fail", "message": "Account deactivated"}), 403
 
-            # 4. INSTANTIATION: Create a User Object from the database results
-            # This maintains your OOP structure
-            current_user = User(user_record)
-            user_data = current_user.to_dict()
-
-            # 5. JWT TOKEN GENERATION
-            # We encode the user identity and an expiration timestamp (24 hours)
+            # 4. JWT Token Generation (Fulfills session tracking requirements)
             token = jwt.encode({
-                'user_id': user_data['user_id'],
-                'role': user_data['role'],
+                'user_id': user_record['user_id'],
+                'role': user_record['user_role'],
                 'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
             }, app.config['SECRET_KEY'], algorithm="HS256")
 
-            # 6. RETURN DATA TO FRONTEND
-            # Include the token, the role (for navigation), and user_id (for worksheet tracking)
+            # 5. Return success data
             return jsonify({
                 "status": "success",
                 "token": token,
-                "role": user_data['role'],
-                "user_id": user_data['user_id']
+                "role": user_record['user_role'],
+                "user_id": user_record['user_id']
             }), 200
             
         else:
-            # Return 401 Unauthorized for bad credentials
+            # Generic error message to prevent "username enumerations" (Security best practice)
             return jsonify({"status": "fail", "message": "Invalid username or password"}), 401
 
     except Exception as e:
-        # Catch any unexpected database or system errors
-        return jsonify({"status": "error", "message": str(e)}), 500
-    
+        print(f"Login Error: {e}")
+        return jsonify({"status": "error", "message": "Internal server error"}), 500
+        
 @app.route('/test-db', methods=['GET'])
 def test_db():
     """Simple test route updated to use the DatabaseManager class."""
@@ -647,20 +653,50 @@ def get_users():
     conn.close()
     return jsonify(users)
 
+from werkzeug.security import generate_password_hash # Ensure this import is at the top of app.py
+
 @app.route('/api/users/create', methods=['POST'])
 def create_user():
+    """
+    Creates a new user with a hashed password.
+    Fulfills Success Criterion #2: Secure Data Storage & RBAC.
+    """
     data = request.json
-    # Logic: Concatenate names and generate username
+    
+    # 1. Generate standard display name and unique username
     full_name = f"{data['firstName']} {data['lastName']}"
     username = db_manager.generate_username(data['firstName'], data['lastName'])
     
-    conn = db_manager.get_connection()
-    cursor = conn.cursor()
-    query = "INSERT INTO users (full_name, username, password, role, is_active) VALUES (%s, %s, %s, %s, 1)"
-    cursor.execute(query, (full_name, username, data['password'], data['role']))
-    conn.commit()
-    conn.close()
-    return jsonify({"status": "success", "username": username})
+    # 2. PASSWORD HASHING (SECURITY UPGRADE)
+    # We never store plain-text passwords. generate_password_hash adds a 'salt' 
+    # and hashes the password using PBKDF2 with SHA256.
+    # Even if two users have the same password, their hashes will look different.
+    hashed_pw = generate_password_hash(data['password'], method='pbkdf2:sha256')
+    
+    try:
+        conn = db_manager.get_connection()
+        cursor = conn.cursor()
+        
+        # 3. Insert the HASHED password into the database, not the raw 'data['password']'
+        query = """
+            INSERT INTO users (full_name, username, password, role, is_active) 
+            VALUES (%s, %s, %s, %s, 1)
+        """
+        cursor.execute(query, (full_name, username, hashed_pw, data['role']))
+        
+        conn.commit()
+        conn.close()
+        
+        # Return success with the generated username so the Manager can give it to the employee
+        return jsonify({
+            "status": "success", 
+            "username": username,
+            "message": "User created with secure hashed password"
+        })
+        
+    except Exception as e:
+        print(f"Error creating user: {e}")
+        return jsonify({"status": "error", "message": "Could not create user"}), 500
 
 @app.route('/api/users/toggle/<int:user_id>', methods=['POST'])
 def api_toggle_user(user_id):
