@@ -653,8 +653,6 @@ def get_users():
     conn.close()
     return jsonify(users)
 
-from werkzeug.security import generate_password_hash # Ensure this import is at the top of app.py
-
 @app.route('/api/users/create', methods=['POST'])
 def create_user():
     """
@@ -662,6 +660,15 @@ def create_user():
     Fulfills Success Criterion #2: Secure Data Storage & RBAC.
     """
     data = request.json
+    password = data.get('password', '')
+
+    # --- NEW VALIDATION LOGIC ---
+    if len(password) < 8:
+        return jsonify({
+            "status": "error", 
+            "message": "Security Violation: Password must be at least 8 characters long."
+        }), 400 # 'Bad Request' status code
+    # ----------------------------
     
     # 1. Generate standard display name and unique username
     full_name = f"{data['firstName']} {data['lastName']}"
