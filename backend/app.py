@@ -346,17 +346,30 @@ class DatabaseManager:
         conn = self.get_connection()
         cursor = conn.cursor()
         try:
+            # Ensure the frontend sends 'signature' (Base64 string or binary)
+            signature_data = data.get('signature', None)
+
+            # Convert Base64 string from React to binary bytes for MySQL LONGBLOB
+            if signature_data and "," in signature_data:
+                import base64 # Can also be placed at top of file
+                signature_data = base64.b64decode(signature_data.split(",")[1])
+
             # 1. Insert Plan (Email/Phone can be None/Null)
             plan_query = """
-                INSERT INTO client_plans (client_name, billing_cycle_type, contact_email, contact_phone, is_active)
-                VALUES (%s, %s, %s, %s, 1)
-            """
+                        INSERT INTO client_plans (
+                            client_name, billing_cycle_type, contact_email, 
+                            contact_phone, client_signature, is_active
+                        )
+                        VALUES (%s, %s, %s, %s, %s, 1)
+                    """
             cursor.execute(plan_query, (
                 data['client_name'], 
                 data['billing_cycle'], 
                 data.get('contact_email'), # .get() returns None if missing
-                data.get('contact_phone')
+                data.get('contact_phone'),  # .get() returns None if missing
+                signature_data
             ))
+
             plan_id = cursor.lastrowid
 
             # 2. Insert Vehicles linked to this plan

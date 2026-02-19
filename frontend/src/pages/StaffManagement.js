@@ -125,7 +125,7 @@ const StaffManagement = () => {
                                     <td style={roleBadgeStyle(user.role)}>
                                         {user.role === 'Manager' ? 'M' : 'D'}
                                     </td>
-                                    <td>{user.full_name}</td>
+                                    <td>{user.user_name}</td>
                                     <td style={usernameStyle}>{user.username}</td>
                                     <td>
                                         <button 
