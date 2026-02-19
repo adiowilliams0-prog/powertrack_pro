@@ -1,7 +1,16 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
+import { useNavigate } from 'react-router-dom';
 
+/**
+ * DailyWorksheet Component
+ * Fulfills Success Criterion #10: Touchscreen-based interface.
+ * Fulfills Success Criterion #3 & #4: Automated pricing and plan recognition.
+ */
 function DailyWorksheet() {
+    const navigate = useNavigate();
+    const userRole = localStorage.getItem('user_role');
+
     // --- Data Lists (Fetched from DB) ---
     const [staffList, setStaffList] = useState([]); 
     const [categories, setCategories] = useState([]);
@@ -34,7 +43,13 @@ function DailyWorksheet() {
         axios.get('http://127.0.0.1:5000/services').then(res => setServices(res.data));
     }, []);
 
-    // --- ALGORITHM: License Plate Lookup ---
+    // --- LOGOUT LOGIC (For Detailers who have no Sidebar) ---
+    const handleLogout = () => {
+        localStorage.clear(); // Clear token, role, and ID
+        navigate('/');
+    };
+
+    // --- ALGORITHM: License Plate Lookup (Criterion #4 & #11) ---
     const handlePlateInput = async (e) => {
         const input = typeof e === 'string' ? e : e.target.value;
         const normalizedPlate = input.toUpperCase().replace(/\s/g, '');
@@ -66,7 +81,7 @@ function DailyWorksheet() {
         }
     };
 
-    // --- ALGORITHM: Pricing Logic ---
+    // --- ALGORITHM: Pricing Logic (Criterion #3) ---
     useEffect(() => {
         const calculateTotal = async () => {
             if (!selectedCategory || selectedServices.length === 0) {
@@ -87,77 +102,56 @@ function DailyWorksheet() {
         calculateTotal();
     }, [selectedCategory, selectedServices, discount, fee]);
 
-    // --- FINAL SUBMISSION LOGIC ---
-    // Fulfills Success Criterion #3, #4, and #5
-   const handleSubmit = async () => {
-    // 1. SESSION RETRIEVAL
-    // Fetch the token and user_id we saved in localStorage during handleLogin
-    const token = localStorage.getItem('token');
-    const userId = localStorage.getItem('user_id');
+    // --- FINAL SUBMISSION LOGIC (Criterion #5) ---
+    const handleSubmit = async () => {
+        const token = localStorage.getItem('token');
+        const userId = localStorage.getItem('user_id');
 
-    // Safety check: If no token exists, the user shouldn't be submitting data
-    if (!token || !userId) {
-        alert("Session expired. Please log in again.");
-        return;
-    }
+        if (!token || !userId) {
+            alert("Session expired. Please log in again.");
+            return;
+        }
 
-    // 2. Prepare Service Snapshots
-    // We send the name and price as they are NOW to prevent historical data loss
-    const serviceSnapshots = await Promise.all(selectedServices.map(async (sId) => {
-        const serviceObj = services.find(s => s.service_id === sId);
-        const priceRes = await axios.post('http://127.0.0.1:5000/calculate-price', {
-            service_id: sId,
-            category_id: selectedCategory
-        });
-        return {
-            id: sId,
-            name: serviceObj.service_name,
-            price: priceRes.data.price
+        const serviceSnapshots = await Promise.all(selectedServices.map(async (sId) => {
+            const serviceObj = services.find(s => s.service_id === sId);
+            const priceRes = await axios.post('http://127.0.0.1:5000/calculate-price', {
+                service_id: sId,
+                category_id: selectedCategory
+            });
+            return { id: sId, name: serviceObj.service_name, price: priceRes.data.price };
+        }));
+
+        const payload = {
+            plate: plate,
+            category_id: selectedCategory,
+            client_plan_id: planDetails ? planDetails.client_plan_id : null,
+            staff_ids: selectedStaff,
+            services: serviceSnapshots,
+            total_price: totalPrice,
+            payment_method: paymentMethod,
+            discount: discount,
+            discount_reason: discountReason,
+            fee: fee,
+            fee_reason: feeReason,
+            notes: notes,
+            creator_id: userId // Ties record to session user
         };
-    }));
 
-    // 3. Bundle the payload
-    // Replaced hardcoded creator_id with the dynamic userId from localStorage
-    const payload = {
-        plate: plate,
-        category_id: selectedCategory,
-        client_plan_id: planDetails ? planDetails.client_plan_id : null,
-        staff_ids: selectedStaff,
-        services: serviceSnapshots,
-        total_price: totalPrice,
-        payment_method: paymentMethod,
-        discount: discount,
-        discount_reason: discountReason,
-        fee: fee,
-        fee_reason: feeReason,
-        notes: notes,
-        creator_id: userId // DYNAMIC SESSION ID: Fulfills Criterion #5 & #8
+        try {
+            const response = await axios.post('http://127.0.0.1:5000/submit-wash', payload, {
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+
+            if (response.data.status === 'success') {
+                alert("Wash Record Submitted Successfully!");
+                resetForm();
+            }
+        } catch (error) {
+            console.error("Submission failed", error);
+            alert("Error submitting record.");
+        }
     };
 
-    try {
-        // 4. AUTHORIZED REQUEST
-        // We include the JWT in the Authorization header as a 'Bearer' token
-        const response = await axios.post('http://127.0.0.1:5000/submit-wash', payload, {
-            headers: {
-                'Authorization': `Bearer ${token}`
-            }
-        });
-
-        if (response.data.status === 'success') {
-            alert("Wash Record Submitted Successfully!");
-            resetForm();
-        }
-    } catch (error) {
-        // Handle unauthorized (401) or connection errors
-        if (error.response && error.response.status === 401) {
-            alert("Session invalid. Please log in again.");
-        } else {
-            console.error("Submission failed", error);
-            alert("Error submitting record. Please check database connection.");
-        }
-    }
-};
-    // --- Form Reset Logic (Success Criterion #10) ---
     const resetForm = () => {
         setPlate('');
         setSelectedStaff([]);
@@ -178,17 +172,30 @@ function DailyWorksheet() {
     };
 
     return (
-        <div style={{ padding: '20px', maxWidth: '600px', margin: 'auto', fontFamily: 'Arial, sans-serif' }}>
-            <h2 style={{ borderBottom: '2px solid #0056b3', paddingBottom: '10px' }}>Daily Worksheet</h2>
+        <div style={containerStyle}>
+            {/* --- HEADER WITH CONDITIONAL LOGOUT --- */}
+            <div style={headerSectionStyle}>
+                <h2 style={{ margin: 0, color: '#2c3e50' }}>Daily Worksheet</h2>
+                {userRole === 'Detailer' && (
+                    <button onClick={handleLogout} style={detailerLogoutBtnStyle}>
+                        Logout 🚪
+                    </button>
+                )}
+            </div>
 
             {/* SECTION 1: STAFF */}
             <section style={sectionStyle}>
                 <h4 style={headerStyle}>1. Staff Assignment</h4>
                 <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
                     {staffList.map(user => (
-                        <div key={user.user_id}>
-                            <input type="checkbox" checked={selectedStaff.includes(user.user_id)} onChange={() => toggleSelection(selectedStaff, setSelectedStaff, user.user_id)} />
-                            <label style={{ marginLeft: '5px' }}>{user.user_name}</label>
+                        <div key={user.user_id} style={checkboxRowStyle}>
+                            <input 
+                                type="checkbox" 
+                                style={checkboxStyle}
+                                checked={selectedStaff.includes(user.user_id)} 
+                                onChange={() => toggleSelection(selectedStaff, setSelectedStaff, user.user_id)} 
+                            />
+                            <label style={{ marginLeft: '10px', fontSize: '16px' }}>{user.full_name || user.user_name}</label>
                         </div>
                     ))}
                 </div>
@@ -214,7 +221,7 @@ function DailyWorksheet() {
                 {planDetails && (
                     <div style={planAlertStyle}>
                         <span>⭐ <b>PLAN ACTIVE:</b> {planDetails.client_name}</span>
-                        <button style={detailBtnStyle} onClick={() => alert(`Plan: ${planDetails.client_name}\nCycle: ${planDetails.billing_cycle_type}`)}>View Details</button>
+                        <button style={detailBtnStyle} onClick={() => alert(`Plan: ${planDetails.client_name}\nCycle: ${planDetails.billing_cycle_type}`)}>View</button>
                     </div>
                 )}
             </section>
@@ -223,9 +230,14 @@ function DailyWorksheet() {
             <section style={sectionStyle}>
                 <h4 style={headerStyle}>3. Services</h4>
                 {services.map(ser => (
-                    <div key={ser.service_id} style={{ marginBottom: '5px' }}>
-                        <input type="checkbox" checked={selectedServices.includes(ser.service_id)} onChange={() => toggleSelection(selectedServices, setSelectedServices, ser.service_id)} />
-                        <label style={{ marginLeft: '10px' }}>{ser.service_name}</label>
+                    <div key={ser.service_id} style={checkboxRowStyle}>
+                        <input 
+                            type="checkbox" 
+                            style={checkboxStyle}
+                            checked={selectedServices.includes(ser.service_id)} 
+                            onChange={() => toggleSelection(selectedServices, setSelectedServices, ser.service_id)} 
+                        />
+                        <label style={{ marginLeft: '10px', fontSize: '16px' }}>{ser.service_name}</label>
                     </div>
                 ))}
             </section>
@@ -259,7 +271,7 @@ function DailyWorksheet() {
                 <textarea placeholder="Notes (Optional)" style={{...inputStyle, marginTop: '15px', height: '60px'}} value={notes} onChange={e => setNotes(e.target.value)} />
 
                 <div style={totalContainerStyle}>
-                    <span style={{ fontSize: '1.1rem' }}>Total:</span>
+                    <span style={{ fontSize: '1.1rem' }}>Total Price:</span>
                     <h2 style={{ margin: 0, color: '#28a745' }}>${totalPrice.toFixed(2)}</h2>
                 </div>
 
@@ -276,17 +288,47 @@ function DailyWorksheet() {
 }
 
 // --- Styles ---
+const containerStyle = { padding: '20px', maxWidth: '600px', margin: 'auto', fontFamily: 'Arial, sans-serif' };
+
+const headerSectionStyle = { 
+    display: 'flex', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    marginBottom: '20px',
+    borderBottom: '2px solid #0056b3', 
+    paddingBottom: '10px' 
+};
+
 const sectionStyle = { marginBottom: '20px', padding: '15px', border: '1px solid #ddd', borderRadius: '8px', backgroundColor: '#fff' };
 const headerStyle = { margin: '0 0 10px 0', color: '#0056b3' };
-const inputStyle = { width: '100%', padding: '12px', marginTop: '5px', boxSizing: 'border-box', borderRadius: '4px', border: '1px solid #ccc' };
-const suggestionBoxStyle = { position: 'absolute', width: '100%', backgroundColor: 'white', border: '1px solid #ccc', zIndex: 100 };
-const suggestionItemStyle = { padding: '10px', cursor: 'pointer', borderBottom: '1px solid #eee' };
-const planAlertStyle = { marginTop: '15px', padding: '10px', backgroundColor: '#e3f2fd', borderRadius: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' };
-const detailBtnStyle = { padding: '5px 10px', backgroundColor: '#2196f3', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer' };
-const totalContainerStyle = { marginTop: '20px', padding: '15px', backgroundColor: '#f1f1f1', borderRadius: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' };
+const inputStyle = { width: '100%', padding: '12px', marginTop: '5px', boxSizing: 'border-box', borderRadius: '4px', border: '1px solid #ccc', fontSize: '16px' };
+const checkboxRowStyle = { display: 'flex', alignItems: 'center', marginBottom: '10px' };
+const checkboxStyle = { width: '20px', height: '20px' }; // Larger for touchscreens
+
+const suggestionBoxStyle = { position: 'absolute', width: '100%', backgroundColor: 'white', border: '1px solid #ccc', zIndex: 100, boxShadow: '0 4px 8px rgba(0,0,0,0.1)' };
+const suggestionItemStyle = { padding: '12px', cursor: 'pointer', borderBottom: '1px solid #eee' };
+
+const planAlertStyle = { marginTop: '15px', padding: '10px', backgroundColor: '#e3f2fd', borderRadius: '5px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #2196f3' };
+const detailBtnStyle = { padding: '8px 12px', backgroundColor: '#2196f3', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold' };
+
+const totalContainerStyle = { marginTop: '20px', padding: '15px', backgroundColor: '#f8f9fa', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', border: '1px solid #dee2e6' };
+
 const submitBtnStyle = (active) => ({
-    marginTop: '15px', width: '100%', padding: '15px', fontSize: '18px', fontWeight: 'bold', border: 'none', borderRadius: '5px', color: 'white',
-    backgroundColor: active ? '#28a745' : '#ccc', cursor: active ? 'pointer' : 'not-allowed'
+    marginTop: '15px', width: '100%', padding: '18px', fontSize: '20px', fontWeight: 'bold', border: 'none', borderRadius: '8px', color: 'white',
+    backgroundColor: active ? '#28a745' : '#ccc', cursor: active ? 'pointer' : 'not-allowed', transition: '0.3s', boxShadow: active ? '0 4px 6px rgba(0,0,0,0.1)' : 'none'
 });
+
+const detailerLogoutBtnStyle = {
+    padding: '10px 20px',
+    backgroundColor: '#e74c3c',
+    color: 'white',
+    border: 'none',
+    borderRadius: '8px',
+    fontWeight: 'bold',
+    cursor: 'pointer',
+    fontSize: '16px', 
+    boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+    transition: 'background 0.2s'
+};
 
 export default DailyWorksheet;

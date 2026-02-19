@@ -36,7 +36,8 @@ function Login() {
         // The user_id will be used to fill 'created_by_user_id' in wash transactions
         localStorage.setItem('token', response.data.token);
         localStorage.setItem('user_id', response.data.user_id);
-        
+        localStorage.setItem('user_role', response.data.role);
+
         // 3. RBAC NAVIGATION: Redirect based on the role returned by the server
         const role = response.data.role;
         if (role === 'Manager') {
@@ -87,23 +88,40 @@ function Login() {
  */
 function LayoutWrapper({ children }) {
   const location = useLocation();
+  const navigate = useNavigate(); // Add this to use navigate if preferred over window.location
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   
+  // --- 1. INSERT THE LOGOUT FUNCTION HERE ---
+  const handleLogout = () => {
+    // Clear session data
+    localStorage.removeItem('token');
+    localStorage.removeItem('user_id');
+    localStorage.removeItem('user_role');
+    
+    // Redirect to login
+    navigate('/'); 
+    // Or use: window.location.href = "/";
+  };
+
   const isLoginPage = location.pathname === '/';
+  // Check role for Sidebar visibility
+  const userRole = localStorage.getItem('user_role');
+  const shouldShowSidebar = !isLoginPage && userRole === 'Manager';
 
   return (
     <div style={{ display: 'flex' }}>
-      {/* We only render the Sidebar if we aren't on the login page.
-          We pass the state and setter as props to Sidebar.js 
-      */}
-      {!isLoginPage && (
-        <Sidebar isOpen={isSidebarOpen} setIsOpen={setIsSidebarOpen} />
+      {/* --- 2. PASS THE FUNCTION TO SIDEBAR AS A PROP --- */}
+      {shouldShowSidebar && (
+        <Sidebar 
+          isOpen={isSidebarOpen} 
+          setIsOpen={setIsSidebarOpen} 
+          onLogout={handleLogout} 
+        />
       )}
       
       <main style={{ 
         flex: 1, 
-        // Dynamic margin calculation: 240px when open, 70px when collapsed, 0 on login
-        marginLeft: isLoginPage ? '0' : (isSidebarOpen ? '240px' : '70px'), 
+        marginLeft: isLoginPage || !shouldShowSidebar ? '0' : (isSidebarOpen ? '240px' : '70px'), 
         transition: 'margin-left 0.3s ease', 
         minHeight: '100vh',
         backgroundColor: '#f8f9fa' 
@@ -121,20 +139,34 @@ function LayoutWrapper({ children }) {
  * Fulfills Success Criterion #2: Role-based navigation and protected routes.
  */
 function App() {
+  // 1. Retrieve the role from storage to determine access
+  const userRole = localStorage.getItem('user_role');
+
   return (
     <Router>
       <LayoutWrapper>
         <Routes>
-          {/* Auth Route */}
+          {/* Auth Route - Always accessible */}
           <Route path="/" element={<Login />} />
           
-          {/* Manager Specific Routes */}
-          <Route path="/dashboard" element={<ManagerDashboard />} />
-          <Route path="/plans" element={<ClientPlans />} />
-          <Route path="/staff" element={<StaffManagement />} />
+          {/* 2. PROTECTED MANAGER ROUTES */}
+          {/* Using a ternary or logical AND ensures these routes 
+              literally do not exist in the router for a Detailer. */}
+          {userRole === 'Manager' && (
+            <>
+              <Route path="/dashboard" element={<ManagerDashboard />} />
+              <Route path="/plans" element={<ClientPlans />} />
+              <Route path="/staff" element={<StaffManagement />} />
+            </>
+          )}
           
-          {/* Detailer Specific Routes */}
+          {/* 3. DETAILER ROUTE */}
           <Route path="/worksheet" element={<DailyWorksheet />} />
+
+          {/* 4. CATCH-ALL REDIRECT */}
+          {/* If a Detailer tries to type /dashboard, they will fall 
+              through to this route and be sent back to Login. */}
+          <Route path="*" element={<Login />} />
         </Routes>
       </LayoutWrapper>
     </Router>

@@ -4,12 +4,12 @@ import { Link, useLocation } from 'react-router-dom';
 /**
  * Collapsible Sidebar Component
  * Fulfills Success Criterion #10: Optimizing screen real estate for touch/mobile.
- * Receives 'isOpen' and 'setIsOpen' as props from App.js (Lifting State Up).
+ * Receives 'onLogout' prop from App.js to handle session termination.
  */
-function Sidebar({ isOpen, setIsOpen }) {
+function Sidebar({ isOpen, setIsOpen, onLogout }) {
     const location = useLocation();
 
-    // Navigation configuration array - makes it easy to add new pages
+    // Navigation configuration array
     const navItems = [
         { name: 'Dashboard', path: '/dashboard', icon: '📊' },
         { name: 'Daily Worksheet', path: '/worksheet', icon: '📝' },
@@ -17,69 +17,78 @@ function Sidebar({ isOpen, setIsOpen }) {
         { name: 'Staff Management', path: '/staff', icon: '👥' },
     ];
 
-    // Toggle function uses the setter passed from the parent (App.js)
     const toggleSidebar = () => setIsOpen(!isOpen);
 
     return (
         <div style={sidebarStyle(isOpen)}>
-            {/* Toggle Button: Positioned on the edge of the sidebar */}
+            {/* Toggle Button */}
             <button onClick={toggleSidebar} style={toggleBtnStyle}>
                 {isOpen ? '◀' : '▶'}
             </button>
 
-            {/* Logo/Branding: Shrinks to initials when collapsed */}
+            {/* Logo/Branding */}
             <div style={logoStyle(isOpen)}>
                 {isOpen ? 'PowerTrack Pro' : 'PTP'}
             </div>
 
-            <nav style={{ marginTop: '20px' }}>
+            {/* Main Navigation */}
+            <nav style={{ flex: 1 }}>
                 {navItems.map((item) => (
                     <Link 
                         key={item.path} 
                         to={item.path} 
                         style={linkStyle(location.pathname === item.path, isOpen)}
-                        title={!isOpen ? item.name : ""} // Browser tooltip for collapsed mode
+                        title={!isOpen ? item.name : ""}
                     >
-                        {/* Icon is always visible */}
                         <span style={{ fontSize: '20px', minWidth: '30px', textAlign: 'center' }}>
                             {item.icon}
                         </span>
-                        
-                        {/* Text label is conditionally rendered based on state */}
                         {isOpen && <span style={{ marginLeft: '10px' }}>{item.name}</span>}
                     </Link>
                 ))}
             </nav>
 
-            {/* Footer info only appears in expanded mode to prevent overflow issues */}
-            {isOpen && (
-                <div style={footerStyle}>
-                    <hr style={{ borderColor: '#34495e', margin: '20px 0' }} />
-                    <p>Manager Access</p>
+            {/* --- LOGOUT SECTION --- */}
+            {/* This div pushes itself to the bottom of the flex container */}
+            <div style={logoutSectionStyle}>
+                <hr style={{ borderColor: '#34495e', marginBottom: '15px' }} />
+                
+                <div 
+                    onClick={onLogout} 
+                    style={logoutButtonStyle(isOpen)}
+                    title={!isOpen ? "Logout" : ""}
+                >
+                    <span style={{ fontSize: '20px', minWidth: '30px', textAlign: 'center' }}>
+                        🚪
+                    </span>
+                    {isOpen && <span style={{ marginLeft: '10px' }}>Logout</span>}
                 </div>
-            )}
+
+                {/* Footer labels */}
+                {isOpen && (
+                    <div style={footerTextStyle}>
+                        <p>Manager Access</p>
+                    </div>
+                )}
+            </div>
         </div>
     );
 }
 
 // --- Dynamic and Static Styles ---
 
-/**
- * Sidebar container style
- * Uses the isOpen boolean to toggle width and applies a CSS transition.
- */
 const sidebarStyle = (isOpen) => ({
     width: isOpen ? '240px' : '70px',
     height: '100vh',
     backgroundColor: '#2c3e50',
     color: '#fff',
-    position: 'fixed', // Keeps navigation accessible while scrolling content
+    position: 'fixed',
     left: 0,
     top: 0,
     display: 'flex',
     flexDirection: 'column',
     padding: '20px 10px',
-    transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)', // Smooth "sliding" animation
+    transition: 'width 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
     zIndex: 1001,
     boxSizing: 'border-box',
     boxShadow: '2px 0 5px rgba(0,0,0,0.1)'
@@ -113,10 +122,6 @@ const logoStyle = (isOpen) => ({
     overflow: 'hidden'
 });
 
-/**
- * Link styling
- * Changes background color if the link's path matches the current URL.
- */
 const linkStyle = (isActive, isOpen) => ({
     display: 'flex',
     alignItems: 'center',
@@ -125,14 +130,33 @@ const linkStyle = (isActive, isOpen) => ({
     textDecoration: 'none',
     borderRadius: '8px',
     marginBottom: '10px',
-    backgroundColor: isActive ? '#3498db' : 'transparent', // Highlight active page
+    backgroundColor: isActive ? '#3498db' : 'transparent',
     transition: 'background-color 0.2s',
     justifyContent: isOpen ? 'flex-start' : 'center',
     overflow: 'hidden'
 });
 
-const footerStyle = {
-    marginTop: 'auto',
+// Logout specific styles
+const logoutSectionStyle = {
+    marginTop: 'auto', // Pushes section to the bottom
+    paddingBottom: '10px'
+};
+
+const logoutButtonStyle = (isOpen) => ({
+    display: 'flex',
+    alignItems: 'center',
+    padding: '12px',
+    color: '#e74c3c', // Red color for logout
+    cursor: 'pointer',
+    borderRadius: '8px',
+    fontWeight: 'bold',
+    transition: 'background-color 0.2s',
+    justifyContent: isOpen ? 'flex-start' : 'center',
+    backgroundColor: 'rgba(231, 76, 60, 0.1)', // Subtle red background
+});
+
+const footerTextStyle = {
+    marginTop: '10px',
     fontSize: '10px',
     color: '#bdc3c7',
     textAlign: 'center',
