@@ -4,8 +4,12 @@ from flask_cors import CORS
 import io
 import pandas as pd
 from flask import send_file
+import jwt
+import datetime
+from functools import wraps
 
 app = Flask(__name__)
+app.config['SECRET_KEY'] = 'secretkey123' # For development, in production, environment variables will be used for secrets!
 CORS(app)
 
 # --- CLASS DEFINITIONS ---
@@ -451,19 +455,12 @@ class User:
     Represents a System User. 
     This allows us to treat the user as an Object rather than just a row of data.
     """
-    def __init__(self, user_data):
-        self.id = user_data['user_id']
-        self.name = user_data['user_name']
-        self.role = user_data['user_role']
-
+    def __init__(self, data):
+        self.id = data.get('user_id') 
+        self.role = data.get('user_role')
+        
     def to_dict(self):
-        # Converts the object attributes into a dictionary for JSON responses.
-        return {
-            "status": "success",
-            "user_id": self.id,
-            "user_name": self.name,
-            "role": self.role
-        }
+        return {"user_id": self.id, "role": self.role}
 
 # --- INSTANTIATE CORE OBJECTS ---
 # We create one instance of our DatabaseManager to be used by the routes
@@ -474,27 +471,50 @@ db_manager = DatabaseManager()
 
 @app.route('/login', methods=['POST'])
 def login():
-    # 1. Capture the data from the Request Object
+    # 1. Capture the data from the Request Object (sent by React)
     data = request.json
     entered_username = data.get('username')
     entered_password = data.get('password')
 
     try:
-        # 2. Use the db_manager object to find the user data
+        # 2. Use the db_manager object to find the user in the database
         user_record = db_manager.fetch_user_by_credentials(entered_username, entered_password)
 
         if user_record:
-            # 3. INSTANTIATION: Create a User Object from the database results
+            # 3. Check if account is active (Safety check for Criterion #6)
+            if not user_record.get('is_active'):
+                return jsonify({"status": "fail", "message": "Account deactivated"}), 403
+
+            # 4. INSTANTIATION: Create a User Object from the database results
+            # This maintains your OOP structure
             current_user = User(user_record)
+            user_data = current_user.to_dict()
+
+            # 5. JWT TOKEN GENERATION
+            # We encode the user identity and an expiration timestamp (24 hours)
+            token = jwt.encode({
+                'user_id': user_data['user_id'],
+                'role': user_data['role'],
+                'exp': datetime.datetime.utcnow() + datetime.timedelta(hours=24)
+            }, app.config['SECRET_KEY'], algorithm="HS256")
+
+            # 6. RETURN DATA TO FRONTEND
+            # Include the token, the role (for navigation), and user_id (for worksheet tracking)
+            return jsonify({
+                "status": "success",
+                "token": token,
+                "role": user_data['role'],
+                "user_id": user_data['user_id']
+            }), 200
             
-            # 4. Use the object's method to return the data
-            return jsonify(current_user.to_dict()), 200
         else:
-            return jsonify({"status": "fail", "message": "Invalid credentials"}), 401
+            # Return 401 Unauthorized for bad credentials
+            return jsonify({"status": "fail", "message": "Invalid username or password"}), 401
 
     except Exception as e:
+        # Catch any unexpected database or system errors
         return jsonify({"status": "error", "message": str(e)}), 500
-
+    
 @app.route('/test-db', methods=['GET'])
 def test_db():
     """Simple test route updated to use the DatabaseManager class."""

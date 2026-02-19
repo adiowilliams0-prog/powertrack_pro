@@ -13,6 +13,7 @@ import StaffManagement from './pages/StaffManagement';
 /**
  * Login Component
  * Handles the authentication logic and Role-Based Access Control (RBAC).
+ * Now updated with JWT persistence to satisfy session tracking requirements.
  */
 function Login() {
   const [username, setUsername] = useState('');
@@ -23,14 +24,21 @@ function Login() {
   const handleLogin = async (e) => {
     e.preventDefault();
     try {
+      // 1. Send credentials to the updated Flask /login route
       const response = await axios.post('http://127.0.0.1:5000/login', {
         username: username,
         password: password
       });
       
       if (response.data.status === 'success') {
+        // 2. STATE PERSISTENCE: Save the JWT token and user_id to LocalStorage
+        // The token will be used for future authorized API calls
+        // The user_id will be used to fill 'created_by_user_id' in wash transactions
+        localStorage.setItem('token', response.data.token);
+        localStorage.setItem('user_id', response.data.user_id);
+        
+        // 3. RBAC NAVIGATION: Redirect based on the role returned by the server
         const role = response.data.role;
-        // Logic to redirect based on the user's role in the database
         if (role === 'Manager') {
           navigate('/dashboard');
         } else {
@@ -38,7 +46,9 @@ function Login() {
         }
       }
     } catch (error) {
-      setMessage('Login Failed: Check your credentials.');
+      // Handle 401 Unauthorized or 500 Server Errors
+      const errorMsg = error.response?.data?.message || 'Login Failed: Check your credentials.';
+      setMessage(errorMsg);
     }
   };
 

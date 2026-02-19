@@ -89,51 +89,74 @@ function DailyWorksheet() {
 
     // --- FINAL SUBMISSION LOGIC ---
     // Fulfills Success Criterion #3, #4, and #5
-    const handleSubmit = async () => {
-        // 1. Prepare Service Snapshots
-        // We send the name and price as they are NOW to prevent historical data loss
-        const serviceSnapshots = await Promise.all(selectedServices.map(async (sId) => {
-            const serviceObj = services.find(s => s.service_id === sId);
-            const priceRes = await axios.post('http://127.0.0.1:5000/calculate-price', {
-                service_id: sId,
-                category_id: selectedCategory
-            });
-            return {
-                id: sId,
-                name: serviceObj.service_name,
-                price: priceRes.data.price
-            };
-        }));
+   const handleSubmit = async () => {
+    // 1. SESSION RETRIEVAL
+    // Fetch the token and user_id we saved in localStorage during handleLogin
+    const token = localStorage.getItem('token');
+    const userId = localStorage.getItem('user_id');
 
-        // 2. Bundle the payload
-        const payload = {
-            plate: plate,
-            category_id: selectedCategory,
-            client_plan_id: planDetails ? planDetails.client_plan_id : null,
-            staff_ids: selectedStaff,
-            services: serviceSnapshots,
-            total_price: totalPrice,
-            payment_method: paymentMethod,
-            discount: discount,
-            discount_reason: discountReason,
-            fee: fee,
-            fee_reason: feeReason,
-            notes: notes,
-            creator_id: 1 // In production, this would be the logged-in user's ID
+    // Safety check: If no token exists, the user shouldn't be submitting data
+    if (!token || !userId) {
+        alert("Session expired. Please log in again.");
+        return;
+    }
+
+    // 2. Prepare Service Snapshots
+    // We send the name and price as they are NOW to prevent historical data loss
+    const serviceSnapshots = await Promise.all(selectedServices.map(async (sId) => {
+        const serviceObj = services.find(s => s.service_id === sId);
+        const priceRes = await axios.post('http://127.0.0.1:5000/calculate-price', {
+            service_id: sId,
+            category_id: selectedCategory
+        });
+        return {
+            id: sId,
+            name: serviceObj.service_name,
+            price: priceRes.data.price
         };
+    }));
 
-        try {
-            const response = await axios.post('http://127.0.0.1:5000/submit-wash', payload);
-            if (response.data.status === 'success') {
-                alert("Wash Record Submitted Successfully!");
-                resetForm();
+    // 3. Bundle the payload
+    // Replaced hardcoded creator_id with the dynamic userId from localStorage
+    const payload = {
+        plate: plate,
+        category_id: selectedCategory,
+        client_plan_id: planDetails ? planDetails.client_plan_id : null,
+        staff_ids: selectedStaff,
+        services: serviceSnapshots,
+        total_price: totalPrice,
+        payment_method: paymentMethod,
+        discount: discount,
+        discount_reason: discountReason,
+        fee: fee,
+        fee_reason: feeReason,
+        notes: notes,
+        creator_id: userId // DYNAMIC SESSION ID: Fulfills Criterion #5 & #8
+    };
+
+    try {
+        // 4. AUTHORIZED REQUEST
+        // We include the JWT in the Authorization header as a 'Bearer' token
+        const response = await axios.post('http://127.0.0.1:5000/submit-wash', payload, {
+            headers: {
+                'Authorization': `Bearer ${token}`
             }
-        } catch (error) {
+        });
+
+        if (response.data.status === 'success') {
+            alert("Wash Record Submitted Successfully!");
+            resetForm();
+        }
+    } catch (error) {
+        // Handle unauthorized (401) or connection errors
+        if (error.response && error.response.status === 401) {
+            alert("Session invalid. Please log in again.");
+        } else {
             console.error("Submission failed", error);
             alert("Error submitting record. Please check database connection.");
         }
-    };
-
+    }
+};
     // --- Form Reset Logic (Success Criterion #10) ---
     const resetForm = () => {
         setPlate('');
