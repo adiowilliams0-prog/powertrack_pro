@@ -648,7 +648,16 @@ def api_get_categories():
 def get_users():
     conn = db_manager.get_connection()
     cursor = conn.cursor(dictionary=True)
-    cursor.execute("SELECT user_id, full_name, username, role, is_active FROM users")
+    # Use 'AS role' to map the DB column to the name your frontend expects
+    cursor.execute("""
+        SELECT 
+            user_id, 
+            user_name AS full_name, 
+            username, 
+            user_role AS role, 
+            is_active 
+        FROM users
+    """)
     users = cursor.fetchall()
     conn.close()
     return jsonify(users)
@@ -686,7 +695,7 @@ def create_user():
         
         # 3. Insert the HASHED password into the database, not the raw 'data['password']'
         query = """
-            INSERT INTO users (full_name, username, password, role, is_active) 
+            INSERT INTO users (user_name, username, password, user_role, is_active) 
             VALUES (%s, %s, %s, %s, 1)
         """
         cursor.execute(query, (full_name, username, hashed_pw, data['role']))
