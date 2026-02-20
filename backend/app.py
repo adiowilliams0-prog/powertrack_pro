@@ -463,7 +463,7 @@ class User:
         self.role = data.get('user_role')
         
     def to_dict(self):
-        return {"user_id": self.id, "role": self.role}
+        return {"user_id": self.id, "user_role": self.role}
 
 # --- INSTANTIATE CORE OBJECTS ---
 # We create one instance of our DatabaseManager to be used by the routes
